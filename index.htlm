@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Tic Tac Toe with AI</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            touch-action: none;
+        }
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+        }
+        #loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 100;
+        }
+        #loading-progress {
+            width: 80%;
+            max-width: 400px;
+            margin-top: 20px;
+        }
+        #mobile-controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            display: none;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+        .joystick {
+            width: 100px;
+            height: 100px;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            position: relative;
+            touch-action: none;
+        }
+        .joystick-inner {
+            width: 40px;
+            height: 40px;
+            background-color: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            position: absolute;
+            top: 30px;
+            left: 30px;
+        }
+        #left-joystick {
+            left: 20px;
+        }
+        #right-joystick {
+            right: 20px;
+        }
+        #action-button {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 60px;
+            height: 60px;
+            background-color: rgba(0, 255, 0, 0.5);
+            border-radius: 50%;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-weight: bold;
+            touch-action: none;
+        }
+        #chat-container {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        #chat-input {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 300px;
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            display: none;
+        }
+        @media (max-width: 768px) {
+            #mobile-controls {
+                display: flex;
+            }
+            #action-button {
+                display: flex;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="ui">
+        <div>Player: <span id="player-symbol">X</span></div>
+        <div>Turn: <span id="turn-indicator">Player</span></div>
+        <div id="ai-thinking" style="display: none;">AI is thinking...</div>
+    </div>
+    
+    <div id="loading">
+        <h1>Loading Game...</h1>
+        <div id="loading-message">Initializing...</div>
+        <progress id="loading-progress" value="0" max="100"></progress>
+    </div>
+    
+    <div id="mobile-controls">
+        <div id="left-joystick" class="joystick">
+            <div class="joystick-inner"></div>
+        </div>
+        <div id="right-joystick" class="joystick">
+            <div class="joystick-inner"></div>
+        </div>
+    </div>
+    
+    <div id="action-button">Place</div>
+    
+    <div id="chat-container"></div>
+    <input type="text" id="chat-input" placeholder="Type to chat with AI...">
+    
+    <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/loaders/FontLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/geometries/TextGeometry.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/PointerLockControls.js"></script>
+    <script type="module">
+        import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+        
+        // Game state
+        const gameState = {
+            board: Array(9).fill(null),
+            playerSymbol: 'X',
+            aiSymbol: 'O',
+            currentTurn: 'player',
+            gameOver: false,
+            winner: null
+        };
+        
+        // 3D scene setup
+        let scene, camera, renderer, controls;
+        let player, boardMeshes = [];
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        let isMobile = /Mobi|Android/i.test(navigator.userAgent);
+        
+        // Movement variables
+        const moveSpeed = 0.2;
+        const rotationSpeed = 0.05;
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let rotateLeft = false;
+        let rotateRight = false;
+        let canJump = false;
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
+        let prevTime = performance.now();
+        
+        // Mobile controls
+        let leftJoystickActive = false;
+        let rightJoystickActive = false;
+        let leftJoystickValue = { x: 0, y: 0 };
+        let rightJoystickValue = { x: 0, y: 0 };
+        
+        // LLM engine
+        let llmEngine;
+        let llmInitialized = false;
+        
+        // Audio
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function createSound(frequency, type, duration) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.exponentialRampToValueAtTime(
+                0.00001, 
+                audioContext.currentTime + duration
+            );
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playPlaceSound() {
+            createSound(523.25, 'sine', 0.1);
+        }
+        
+        function playWinSound() {
+            createSound(1046.5, 'square', 0.5);
+        }
+        
+        function playLoseSound() {
+            createSound(220, 'sine', 0.5);
+        }
+        
+        function playDrawSound() {
+            createSound(349.23, 'triangle', 0.3);
+        }
+        
+        function playErrorSound() {
+            createSound(110, 'sawtooth', 0.2);
+        }
+        
+        // Initialize the game
+        async function init() {
+            updateLoadingMessage("Initializing 3D scene...");
+            
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 5, 10);
+            camera.lookAt(0, 0, 0);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas'), antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+            
+            // Ground
+            const groundGeometry = new THREE.PlaneGeometry(20, 20);
+            const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            // Player
+            const playerGeometry = new THREE.BoxGeometry(0.5, 1.8, 0.5);
+            const playerMaterial = new THREE.MeshStandardMaterial({ color: 0x4682B4 });
+            player = new THREE.Mesh(playerGeometry, playerMaterial);
+            player.position.y = 0.9;
+            player.castShadow = true;
+            scene.add(player);
+            
+            // Board
+            createBoard();
+            
+            // Controls
+            if (isMobile) {
+                setupMobileControls();
+            } else {
+                setupDesktopControls();
+            }
+            
+            // Initialize LLM
+            updateLoadingMessage("Loading AI model...");
+            try {
+                llmEngine = await webllm.CreateMLCEngine(
+                    "Qwen2.5-Coder-1.5B-Instruct-q4f32_1-MLC",
+                    { initProgressCallback: reportLLMProgress }
+                );
+                llmInitialized = true;
+                updateLoadingMessage("AI model loaded!");
+                
+                // Test the LLM
+                const reply = await llmEngine.chat.completions.create({
+                    messages: [{role: "user", content: "Hello! I'm ready to play tic tac toe with you."}],
+                    temperature: 0.7,
+                });
+                console.log("LLM response:", reply.choices[0].message.content);
+            } catch (error) {
+                console.error("Error initializing LLM:", error);
+                updateLoadingMessage("Failed to load AI model. Using simple AI instead.");
+            }
+            
+            // Hide loading screen
+            setTimeout(() => {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('chat-container').style.display = 'block';
+                document.getElementById('chat-input').style.display = 'block';
+                
+                // Start game loop
+                animate();
+            }, 500);
+        }
+        
+        function reportLLMProgress(report) {
+            const progress = Math.floor(report.progress * 100);
+            document.getElementById('loading-progress').value = progress;
+            document.getElementById('loading-message').textContent = report.text;
+        }
+        
+        function updateLoadingMessage(message) {
+            document.getElementById('loading-message').textContent = message;
+        }
+        
+        function createBoard() {
+            // Clear existing board meshes
+            boardMeshes.forEach(mesh => scene.remove(mesh));
+            boardMeshes = [];
+            
+            // Board lines
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0x000000 });
+            
+            // Vertical lines
+            for (let i = 1; i <= 2; i++) {
+                const points = [
+                    new THREE.Vector3(i - 1.5, 0.01, -1.5),
+                    new THREE.Vector3(i - 1.5, 0.01, 1.5)
+                ];
+                const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(lineGeometry, lineMaterial);
+                scene.add(line);
+                boardMeshes.push(line);
+            }
+            
+            // Horizontal lines
+            for (let i = 1; i <= 2; i++) {
+                const points = [
+                    new THREE.Vector3(-1.5, 0.01, i - 1.5),
+                    new THREE.Vector3(1.5, 0.01, i - 1.5)
+                ];
+                const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(lineGeometry, lineMaterial);
+                scene.add(line);
+                boardMeshes.push(line);
+            }
+            
+            // Create cells
+            const cellSize = 1;
+            for (let row = 0; row < 3; row++) {
+                for (let col = 0; col < 3; col++) {
+                    const x = col - 1;
+                    const z = 1 - row;
+                    
+                    // Create a transparent plane for interaction
+                    const geometry = new THREE.PlaneGeometry(cellSize, cellSize);
+                    const material = new THREE.MeshBasicMaterial({
+                        color: 0xffffff,
+                        transparent: true,
+                        opacity: 0.0
+                    });
+                    const plane = new THREE.Mesh(geometry, material);
+                    plane.position.set(x, 0.02, z);
+                    plane.rotation.x = -Math.PI / 2;
+                    plane.userData = { row, col };
+                    scene.add(plane);
+                    boardMeshes.push(plane);
+                    
+                    // If there's a symbol in this cell, render it
+                    const cellIndex = row * 3 + col;
+                    if (gameState.board[cellIndex]) {
+                        addSymbolToCell(row, col, gameState.board[cellIndex]);
+                    }
+                }
+            }
+        }
+        
+        function addSymbolToCell(row, col, symbol) {
+            const x = col - 1;
+            const z = 1 - row;
+            
+            // Remove any existing symbol in this cell
+            boardMeshes = boardMeshes.filter(mesh => {
+                if (mesh.userData && mesh.userData.row === row && mesh.userData.col === col) {
+                    scene.remove(mesh);
+                    return false;
+                }
+                return true;
+            });
+            
+            // Create text geometry
+            const loader = new THREE.FontLoader();
+            loader.load('https://cdn.jsdelivr.net/npm/three@0.140.0/examples/fonts/helvetiker_regular.typeface.json', function(font) {
+                const textGeometry = new THREE.TextGeometry(symbol, {
+                    font: font,
+                    size: 0.8,
+                    height: 0.1,
+                });
+                
+                const textMaterial = new THREE.MeshStandardMaterial({ 
+                    color: symbol === 'X' ? 0xFF0000 : 0x0000FF,
+                    emissive: 0x111111,
+                    metalness: 0.5,
+                    roughness: 0.5
+                });
+                
+                const textMesh = new THREE.Mesh(textGeometry, textMaterial);
+                textMesh.position.set(x - 0.2, 0.1, z + 0.2);
+                textMesh.rotation.x = -Math.PI / 2;
+                textMesh.userData = { row, col, isSymbol: true };
+                scene.add(textMesh);
+                boardMeshes.push(textMesh);
+            });
+        }
+        
+        function setupDesktopControls() {
+            // Mouse controls for interaction
+            window.addEventListener('click', onMouseClick, false);
+            
+            // Keyboard controls for movement
+            document.addEventListener('keydown', onKeyDown, false);
+            document.addEventListener('keyup', onKeyUp, false);
+            
+            // Pointer lock controls for first-person movement
+            controls = new THREE.PointerLockControls(camera, document.body);
+            
+            const blocker = document.getElementById('loading');
+            blocker.style.cursor = 'pointer';
+            
+            blocker.addEventListener('click', function() {
+                controls.lock();
+            }, false);
+            
+            controls.addEventListener('lock', function() {
+                blocker.style.display = 'none';
+            });
+            
+            controls.addEventListener('unlock', function() {
+                blocker.style.display = 'block';
+            });
+        }
+        
+        function setupMobileControls() {
+            const leftJoystick = document.getElementById('left-joystick');
+            const leftJoystickInner = leftJoystick.querySelector('.joystick-inner');
+            const rightJoystick = document.getElementById('right-joystick');
+            const rightJoystickInner = rightJoystick.querySelector('.joystick-inner');
+            const actionButton = document.getElementById('action-button');
+            
+            let leftJoystickStart = { x: 0, y: 0 };
+            let rightJoystickStart = { x: 0, y: 0 };
+            
+            // Left joystick (movement)
+            leftJoystick.addEventListener('touchstart', function(e) {
+                e.preventDefault();
+                const rect = leftJoystick.getBoundingClientRect();
+                leftJoystickStart.x = rect.left + rect.width / 2;
+                leftJoystickStart.y = rect.top + rect.height / 2;
+                leftJoystickActive = true;
+            });
+            
+            document.addEventListener('touchmove', function(e) {
+                if (!leftJoystickActive) return;
+                e.preventDefault();
+                
+                const touch = e.touches[0];
+                const deltaX = touch.clientX - leftJoystickStart.x;
+                const deltaY = touch.clientY - leftJoystickStart.y;
+                
+                const distance = Math.min(Math.sqrt(deltaX * deltaX + deltaY * deltaY), 40);
+                const angle = Math.atan2(deltaY, deltaX);
+                
+                leftJoystickValue.x = distance * Math.cos(angle) / 40;
+                leftJoystickValue.y = distance * Math.sin(angle) / 40;
+                
+                leftJoystickInner.style.transform = `translate(${leftJoystickValue.x * 30}px, ${leftJoystickValue.y * 30}px)`;
+            });
+            
+            document.addEventListener('touchend', function(e) {
+                if (!leftJoystickActive) return;
+                leftJoystickActive = false;
+                leftJoystickValue = { x: 0, y: 0 };
+                leftJoystickInner.style.transform = 'translate(0, 0)';
+            });
+            
+            // Right joystick (rotation)
+            rightJoystick.addEventListener('touchstart', function(e) {
+                e.preventDefault();
+                const rect = rightJoystick.getBoundingClientRect();
+                rightJoystickStart.x = rect.left + rect.width / 2;
+                rightJoystickStart.y = rect.top + rect.height / 2;
+                rightJoystickActive = true;
+            });
+            
+            document.addEventListener('touchmove', function(e) {
+                if (!rightJoystickActive) return;
+                e.preventDefault();
+                
+                const touch = e.touches[0] || e.touches[e.touches.length - 1];
+                const deltaX = touch.clientX - rightJoystickStart.x;
+                const deltaY = touch.clientY - rightJoystickStart.y;
+                
+                const distance = Math.min(Math.sqrt(deltaX * deltaX + deltaY * deltaY), 40);
+                const angle = Math.atan2(deltaY, deltaX);
+                
+                rightJoystickValue.x = distance * Math.cos(angle) / 40;
+                rightJoystickValue.y = distance * Math.sin(angle) / 40;
+                
+                rightJoystickInner.style.transform = `translate(${rightJoystickValue.x * 30}px, ${rightJoystickValue.y * 30}px)`;
+            });
+            
+            document.addEventListener('touchend', function(e) {
+                if (!rightJoystickActive) return;
+                rightJoystickActive = false;
+                rightJoystickValue = { x: 0, y: 0 };
+                rightJoystickInner.style.transform = 'translate(0, 0)';
+            });
+            
+            // Action button
+            actionButton.addEventListener('touchstart', function(e) {
+                e.preventDefault();
+                attemptPlaceSymbol();
+            });
+            
+            // Also support click for devices with mouse
+            actionButton.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                attemptPlaceSymbol();
+            });
+        }
+        
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'ArrowUp':
+                case 'KeyW':
+                    moveForward = true;
+                    break;
+                case 'ArrowLeft':
+                case 'KeyA':
+                    moveLeft = true;
+                    break;
+                case 'ArrowDown':
+                case 'KeyS':
+                    moveBackward = true;
+                    break;
+                case 'ArrowRight':
+                case 'KeyD':
+                    moveRight = true;
+                    break;
+                case 'KeyQ':
+                    rotateLeft = true;
+                    break;
+                case 'KeyE':
+                    rotateRight = true;
+                    break;
+                case 'Space':
+                    attemptPlaceSymbol();
+                    break;
+            }
+        }
+        
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'ArrowUp':
+                case 'KeyW':
+                    moveForward = false;
+                    break;
+                case 'ArrowLeft':
+                case 'KeyA':
+                    moveLeft = false;
+                    break;
+                case 'ArrowDown':
+                case 'KeyS':
+                    moveBackward = false;
+                    break;
+                case 'ArrowRight':
+                case 'KeyD':
+                    moveRight = false;
+                    break;
+                case 'KeyQ':
+                    rotateLeft = false;
+                    break;
+                case 'KeyE':
+                    rotateRight = false;
+                    break;
+            }
+        }
+        
+        function onMouseClick(event) {
+            if (gameState.currentTurn !== 'player' || gameState.gameOver) return;
+            
+            // Calculate mouse position in normalized device coordinates
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // Update the raycaster
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Calculate objects intersecting the picking ray
+            const intersects = raycaster.intersectObjects(boardMeshes);
+            
+            for (let i = 0; i < intersects.length; i++) {
+                const intersect = intersects[i];
+                if (intersect.object.userData && intersect.object.userData.row !== undefined) {
+                    const { row, col } = intersect.object.userData;
+                    makeMove(row, col);
+                    break;
+                }
+            }
+        }
+        
+        function attemptPlaceSymbol() {
+            if (gameState.currentTurn !== 'player' || gameState.gameOver) return;
+            
+            // Cast a ray from the player's position forward
+            const playerDirection = new THREE.Vector3();
+            camera.getWorldDirection(playerDirection);
+            
+            raycaster.set(player.position, playerDirection.normalize());
+            
+            // Calculate objects intersecting the picking ray
+            const intersects = raycaster.intersectObjects(boardMeshes);
+            
+            for (let i = 0; i < intersects.length; i++) {
+                const intersect = intersects[i];
+                if (intersect.object.userData && intersect.object.userData.row !== undefined) {
+                    const { row, col } = intersect.object.userData;
+                    makeMove(row, col);
+                    break;
+                }
+            }
+        }
+        
+        function makeMove(row, col) {
+            const cellIndex = row * 3 + col;
+            
+            // Check if cell is empty
+            if (gameState.board[cellIndex] !== null) {
+                playErrorSound();
+                return;
+            }
+            
+            // Place player's symbol
+            gameState.board[cellIndex] = gameState.playerSymbol;
+            addSymbolToCell(row, col, gameState.playerSymbol);
+            playPlaceSound();
+            
+            // Check for win or draw
+            checkGameStatus();
+            
+            if (!gameState.gameOver) {
+                // AI's turn
+                gameState.currentTurn = 'ai';
+                document.getElementById('turn-indicator').textContent = 'AI';
+                document.getElementById('ai-thinking').style.display = 'block';
+                
+                setTimeout(async () => {
+                    await aiMakeMove();
+                    document.getElementById('ai-thinking').style.display = 'none';
+                }, 500);
+            }
+        }
+        
+        async function aiMakeMove() {
+            if (gameState.gameOver) return;
+            
+            // If LLM is initialized, use it to make a move
+            if (llmInitialized) {
+                try {
+                    // Convert board to string representation
+                    let boardStr = '';
+                    for (let i = 0; i < 9; i++) {
+                        boardStr += gameState.board[i] || '-';
+                        if (i % 3 === 2) boardStr += '\n';
+                    }
+                    
+                    const prompt = `We're playing tic tac toe. You are '${gameState.aiSymbol}' and I'm '${gameState.playerSymbol}'. 
+Current board (0-based rows and columns):
+${boardStr}
+Please respond with ONLY the row and column (0-2) where you want to place your symbol, in the format "row col".`;
+                    
+                    const reply = await llmEngine.chat.completions.create({
+                        messages: [{role: "user", content: prompt}],
+                        temperature: 0.1,
+                    });
+                    
+                    const response = reply.choices[0].message.content.trim();
+                    addToChat(`AI: ${response}`, 'ai');
+                    
+                    // Parse the response
+                    const match = response.match(/(\d)\s*(\d)/);
+                    if (match) {
+                        const row = parseInt(match[1]);
+                        const col = parseInt(match[2]);
+                        
+                        if (row >= 0 && row <= 2 && col >= 0 && col <= 2) {
+                            const cellIndex = row * 3 + col;
+                            if (gameState.board[cellIndex] === null) {
+                                gameState.board[cellIndex] = gameState.aiSymbol;
+                                addSymbolToCell(row, col, gameState.aiSymbol);
+                                playPlaceSound();
+                                
+                                // Check for win or draw
+                                checkGameStatus();
+                                
+                                if (!gameState.gameOver) {
+                                    gameState.currentTurn = 'player';
+                                    document.getElementById('turn-indicator').textContent = 'Player';
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    
+                    // If LLM response was invalid, fall back to random move
+                    console.warn("Invalid LLM response, falling back to random move");
+                } catch (error) {
+                    console.error("Error with LLM:", error);
+                    // Fall back to random move if LLM fails
+                }
+            }
+            
+            // Fallback: Simple AI (random move)
+            const emptyCells = [];
+            for (let i = 0; i < 9; i++) {
+                if (gameState.board[i] === null) {
+                    emptyCells.push(i);
+                }
+            }
+            
+            if (emptyCells.length > 0) {
+                const randomIndex = Math.floor(Math.random() * emptyCells.length);
+                const cellIndex = emptyCells[randomIndex];
+                const row = Math.floor(cellIndex / 3);
+                const col = cellIndex % 3;
+                
+                gameState.board[cellIndex] = gameState.aiSymbol;
+                addSymbolToCell(row, col, gameState.aiSymbol);
+                playPlaceSound();
+                
+                // Check for win or draw
+                checkGameStatus();
+                
+                if (!gameState.gameOver) {
+                    gameState.currentTurn = 'player';
+                    document.getElementById('turn-indicator').textContent = 'Player';
+                }
+            }
+        }
+        
+        function checkGameStatus() {
+            const winningCombinations = [
+                [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
+                [0, 3, 6], [1, 4, 7], [2, 5, 8], // columns
+                [0, 4, 8], [2, 4, 6]             // diagonals
+            ];
+            
+            // Check for win
+            for (const combo of winningCombinations) {
+                const [a, b, c] = combo;
+                if (gameState.board[a] && 
+                    gameState.board[a] === gameState.board[b] && 
+                    gameState.board[a] === gameState.board[c]) {
+                    
+                    gameState.gameOver = true;
+                    gameState.winner = gameState.board[a];
+                    
+                    if (gameState.winner === gameState.playerSymbol) {
+                        document.getElementById('turn-indicator').textContent = 'You win!';
+                        playWinSound();
+                    } else {
+                        document.getElementById('turn-indicator').textContent = 'AI wins!';
+                        playLoseSound();
+                    }
+                    
+                    return;
+                }
+            }
+            
+            // Check for draw
+            if (!gameState.board.includes(null)) {
+                gameState.gameOver = true;
+                document.getElementById('turn-indicator').textContent = 'Draw!';
+                playDrawSound();
+            }
+        }
+        
+        function resetGame() {
+            gameState.board = Array(9).fill(null);
+            gameState.gameOver = false;
+            gameState.winner = null;
+            gameState.currentTurn = 'player';
+            
+            document.getElementById('turn-indicator').textContent = 'Player';
+            document.getElementById('ai-thinking').style.display = 'none';
+            
+            createBoard();
+        }
+        
+        function addToChat(message, sender) {
+            const chatContainer = document.getElementById('chat-container');
+            const messageElement = document.createElement('div');
+            messageElement.style.color = sender === 'ai' ? '#00ff00' : '#ffff00';
+            messageElement.textContent = message;
+            chatContainer.appendChild(messageElement);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        // Handle chat input
+        document.getElementById('chat-input').addEventListener('keypress', async function(e) {
+            if (e.key === 'Enter') {
+                const message = this.value.trim();
+                if (message) {
+                    addToChat(`You: ${message}`, 'player');
+                    this.value = '';
+                    
+                    if (llmInitialized) {
+                        try {
+                            const reply = await llmEngine.chat.completions.create({
+                                messages: [{role: "user", content: message}],
+                                temperature: 0.7,
+                            });
+                            addToChat(`AI: ${reply.choices[0].message.content}`, 'ai');
+                        } catch (error) {
+                            console.error("Error with LLM chat:", error);
+                            addToChat("AI: Sorry, I encountered an error.", 'ai');
+                        }
+                    } else {
+                        addToChat("AI: I'm not fully initialized yet.", 'ai');
+                    }
+                }
+            }
+        });
+        
+        // Game loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+            prevTime = time;
+            
+            // Handle movement
+            if (controls && controls.isLocked) {
+                // Desktop controls
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+                
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize();
+                
+                if (moveForward || moveBackward) velocity.z -= direction.z * moveSpeed * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * moveSpeed * delta;
+                
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+                
+                if (rotateLeft) controls.getObject().rotation.y += rotationSpeed;
+                if (rotateRight) controls.getObject().rotation.y -= rotationSpeed;
+            } else if (isMobile) {
+                // Mobile controls
+                const moveX = leftJoystickValue.x * moveSpeed * delta * 10;
+                const moveZ = -leftJoystickValue.y * moveSpeed * delta * 10;
+                
+                // Rotate based on right joystick
+                if (rightJoystickActive) {
+                    player.rotation.y -= rightJoystickValue.x * rotationSpeed * 2;
+                }
+                
+                // Calculate movement direction based on player's rotation
+                const angle = player.rotation.y;
+                const moveDirection = new THREE.Vector3(
+                    Math.sin(angle) * moveZ + Math.cos(angle) * moveX,
+                    0,
+                    Math.cos(angle) * moveZ - Math.sin(angle) * moveX
+                );
+                
+                player.position.add(moveDirection);
+                
+                // Keep player above ground
+                if (player.position.y < 0.9) {
+                    player.position.y = 0.9;
+                }
+                
+                // Make camera follow player
+                camera.position.x = player.position.x;
+                camera.position.z = player.position.z + 5;
+                camera.lookAt(player.position);
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Gamepad support
+        let gamepadConnected = false;
+        
+        window.addEventListener("gamepadconnected", function(e) {
+            console.log("Gamepad connected:", e.gamepad.id);
+            gamepadConnected = true;
+        });
+        
+        window.addEventListener("gamepaddisconnected", function(e) {
+            console.log("Gamepad disconnected:", e.gamepad.id);
+            gamepadConnected = false;
+        });
+        
+        function checkGamepads() {
+            if (!navigator.getGamepads) return;
+            
+            const gamepads = navigator.getGamepads();
+            for (let i = 0; i < gamepads.length; i++) {
+                const gamepad = gamepads[i];
+                if (!gamepad) continue;
+                
+                // Left stick for movement
+                const leftX = gamepad.axes[0];
+                const leftY = gamepad.axes[1];
+                
+                if (Math.abs(leftX) > 0.1 || Math.abs(leftY) > 0.1) {
+                    const moveX = leftX * moveSpeed * 0.1;
+                    const moveZ = -leftY * moveSpeed * 0.1;
+                    
+                    const angle = player.rotation.y;
+                    const moveDirection = new THREE.Vector3(
+                        Math.sin(angle) * moveZ + Math.cos(angle) * moveX,
+                        0,
+                        Math.cos(angle) * moveZ - Math.sin(angle) * moveX
+                    );
+                    
+                    player.position.add(moveDirection);
+                }
+                
+                // Right stick for rotation
+                const rightX = gamepad.axes[2];
+                if (Math.abs(rightX) > 0.1) {
+                    player.rotation.y -= rightX * rotationSpeed * 0.5;
+                }
+                
+                // Buttons
+                if (gamepad.buttons[0].pressed) { // A button
+                    attemptPlaceSymbol();
+                }
+                
+                // Make camera follow player
+                camera.position.x = player.position.x;
+                camera.position.z = player.position.z + 5;
+                camera.lookAt(player.position);
+            }
+        }
+        
+        // Start gamepad polling
+        setInterval(checkGamepads, 1000/60);
+        
+        // Initialize the game
+        init();
+    </script>
+</body>
+</html>
