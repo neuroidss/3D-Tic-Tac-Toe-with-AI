@@ -878,7 +878,7 @@ Please respond with ONLY the row and column (0-2) where you want to place your s
                 direction.x = Number(moveRight) - Number(moveLeft);
                 direction.normalize();
                 
-                if (moveForward || moveBackward) velocity.z -= -direction.z * moveSpeed * delta;
+                if (moveForward || moveBackward) velocity.z -= direction.z * moveSpeed * delta;
                 if (moveLeft || moveRight) velocity.x -= direction.x * moveSpeed * delta;
                 
                 controls.moveRight(-velocity.x * delta);
@@ -889,7 +889,7 @@ Please respond with ONLY the row and column (0-2) where you want to place your s
             } else if (isMobile) {
                 // Mobile controls
                 const moveX = leftJoystickValue.x * moveSpeed * delta * 10;
-                const moveZ = -leftJoystickValue.y * moveSpeed * delta * 10;
+                const moveZ = leftJoystickValue.y * moveSpeed * delta * 10;
                 
                 // Rotate based on right joystick
                 if (rightJoystickActive) {
